@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Connecting Google Calendar…</title>
+<style>
+  body{font:14px/1.4 -apple-system,Segoe UI,Arial,sans-serif;color:#222;background:#fff;
+       display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}
+  .msg{max-width:320px;padding:1rem}
+</style>
+</head>
+<body>
+<div class="msg" id="msg">Connecting to Google…</div>
+<script src="https://accounts.google.com/gsi/client" onload="init()" onerror="fail('Could not load the Google sign-in library.')"></script>
+<script>
+// Small https helper page for the Roseberry planner's Google Calendar export. The planner itself
+// runs from a file:// URL, which Google's OAuth library (Google Identity Services) refuses to issue
+// tokens to — it only trusts registered http(s) origins. This page runs the entire token-acquisition
+// step on a trusted https origin instead, then hands the resulting access token back to whichever
+// window opened this popup via postMessage. Deploy this file at
+// https://tjdscgit.github.io/google-oauth-connect/ (same GitHub Pages site as the existing
+// ticktick-oauth-redirect page) and register that origin — https://tjdscgit.github.io — as an
+// Authorized JavaScript origin on the Google Cloud OAuth Client ID used here.
+function qs(name){ return new URLSearchParams(location.search).get(name); }
+function fail(msg){
+  document.getElementById("msg").textContent = msg;
+  if(window.opener) window.opener.postMessage({source:"gcal-oauth", error: msg}, "*");
+}
+function init(){
+  const clientId = qs("client_id");
+  const silent = qs("silent") === "1";
+  if(!clientId){ fail("Missing client_id."); return; }
+  if(!window.google || !google.accounts || !google.accounts.oauth2){
+    fail("Google sign-in library failed to load."); return;
+  }
+  try{
+    const client = google.accounts.oauth2.initTokenClient({
+      client_id: clientId,
+      scope: "https://www.googleapis.com/auth/calendar",
+      prompt: silent ? "" : "consent",
+      callback: (resp)=>{
+        if(!resp || resp.error){
+          fail((resp && resp.error) || "Google sign-in failed or was cancelled.");
+          return;
+        }
+        if(window.opener){
+          window.opener.postMessage({source:"gcal-oauth", token: resp.access_token, expiresIn: resp.expires_in}, "*");
+        }
+        document.getElementById("msg").textContent = "Connected — you can close this window.";
+        setTimeout(()=>window.close(), 400);
+      },
+      error_callback: (err)=>{
+        fail((err && err.message) || "Google sign-in failed or was cancelled.");
+      },
+    });
+    client.requestAccessToken();
+  }catch(e){
+    fail("Error starting Google sign-in: " + e.message);
+  }
+}
+</script>
+</body>
+</html>
