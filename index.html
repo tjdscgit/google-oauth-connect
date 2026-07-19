@@ -54,7 +54,7 @@ if(h.get("access_token")){
   }else{
     const authUrl = "https://accounts.google.com/o/oauth2/v2/auth?" + new URLSearchParams({
       client_id: clientId, redirect_uri: REDIRECT_URI, response_type: "token",
-      scope: SCOPE, include_granted_scopes: "true", prompt: silent ? "none" : "consent",
+      scope: SCOPE, include_granted_scopes: "true", prompt: silent ? "none" : "select_account consent",
     }).toString();
     location.replace(authUrl);
   }
