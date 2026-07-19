@@ -11,7 +11,7 @@
 </head>
 <body>
 <div class="msg" id="msg">Connecting to Google…</div>
-<script src="https://accounts.google.com/gsi/client" onload="init()" onerror="fail('Could not load the Google sign-in library.')"></script>
+<script src="https://accounts.google.com/gsi/client"></script>
 <script>
 // Small https helper page for the Roseberry planner's Google Calendar export. The planner itself
 // runs from a file:// URL, which Google's OAuth library (Google Identity Services) refuses to issue
@@ -58,6 +58,12 @@ function init(){
     fail("Error starting Google sign-in: " + e.message);
   }
 }
+// Called directly (not via the script tag's onload) — a plain, non-async/non-defer <script src>
+// blocks HTML parsing until it's fully loaded and executed, so by the time this second inline
+// script block runs, the gsi/client library above is already in place. Wiring this through the
+// script tag's onload attribute instead is a trap: that event fires before the browser has parsed
+// this later block, so the referenced function doesn't exist yet and the call just silently fails.
+init();
 </script>
 </body>
 </html>
