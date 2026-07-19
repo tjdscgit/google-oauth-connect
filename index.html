@@ -7,88 +7,58 @@
   body{font:14px/1.4 -apple-system,Segoe UI,Arial,sans-serif;color:#222;background:#fff;
        display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}
   .wrap{max-width:320px;padding:1rem}
-  button.signin{margin-top:.9rem;padding:.6rem 1.2rem;font-size:14px;border-radius:6px;
-       border:1px solid #dadce0;background:#fff;cursor:pointer;display:none}
-  button.signin:hover{background:#f8f9fa}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <div id="msg">Connecting to Google…</div>
-  <button id="signinBtn" class="signin" type="button">Sign in with Google</button>
-</div>
-<script src="https://accounts.google.com/gsi/client"></script>
+<div class="wrap" id="msg">Connecting to Google…</div>
 <script>
 // Small https helper page for the Roseberry planner's Google Calendar export. The planner itself
-// runs from a file:// URL, which Google's OAuth library (Google Identity Services) refuses to issue
-// tokens to — it only trusts registered http(s) origins. This page runs the entire token-acquisition
-// step on a trusted https origin instead, then hands the resulting access token back to whichever
-// window opened this popup via postMessage. Deploy this file at
-// https://tjdscgit.github.io/google-oauth-connect/ (same GitHub Pages site as the existing
-// ticktick-oauth-redirect page) and register that origin — https://tjdscgit.github.io — as an
-// Authorized JavaScript origin on the Google Cloud OAuth Client ID used here.
+// runs from a file:// URL, which Google refuses to grant OAuth tokens to directly — it only trusts
+// registered http(s) origins/redirect URIs. This page runs the whole Google sign-in step on a
+// trusted https origin instead (this one), then hands the resulting access token back to whichever
+// window opened it, via postMessage.
+//
+// Deliberately NOT using Google Identity Services' popup-based token client here: that opens a
+// *second* popup from within this already-a-popup page, and browsers reliably keep blocking that
+// second-level popup for this origin once they've blocked it once — even on a later, genuine click.
+// Instead this page just navigates ITSELF (no popup involved at all) to Google's OAuth authorization
+// endpoint with response_type=token, and Google redirects back to this same URL with the access
+// token in the URL fragment — nothing for a popup blocker to ever object to, since it's just a
+// normal page navigation.
+//
+// Deploy this file at https://tjdscgit.github.io/google-oauth-connect/ and register that exact URL
+// as an Authorized redirect URI (not just a JS origin) on the Google Cloud OAuth Client ID used here.
+const REDIRECT_URI = "https://tjdscgit.github.io/google-oauth-connect/";
+const SCOPE = "https://www.googleapis.com/auth/calendar";
+
 function qs(name){ return new URLSearchParams(location.search).get(name); }
-function fail(msg){
-  document.getElementById("msg").textContent = msg;
-  document.getElementById("signinBtn").style.display = "none";
-  if(window.opener) window.opener.postMessage({source:"gcal-oauth", error: msg}, "*");
-}
-function succeed(resp){
-  if(window.opener){
-    window.opener.postMessage({source:"gcal-oauth", token: resp.access_token, expiresIn: resp.expires_in}, "*");
-  }
-  document.getElementById("msg").textContent = "Connected — you can close this window.";
-  document.getElementById("signinBtn").style.display = "none";
+function hashParams(){ return new URLSearchParams(location.hash.slice(1)); }
+function setMsg(t){ document.getElementById("msg").textContent = t; }
+function finish(payload){
+  if(window.opener) window.opener.postMessage(Object.assign({source:"gcal-oauth"}, payload), "*");
   setTimeout(()=>window.close(), 400);
 }
-function init(){
+
+const h = hashParams();
+if(h.get("access_token")){
+  setMsg("Connected — you can close this window.");
+  finish({ token: h.get("access_token"), expiresIn: Number(h.get("expires_in")) || 3600 });
+}else if(h.get("error")){
+  setMsg("Google sign-in failed: " + h.get("error"));
+  finish({ error: h.get("error") });
+}else{
   const clientId = qs("client_id");
   const silent = qs("silent") === "1";
-  if(!clientId){ fail("Missing client_id."); return; }
-  if(!window.google || !google.accounts || !google.accounts.oauth2){
-    fail("Google sign-in library failed to load."); return;
-  }
-  try{
-    const client = google.accounts.oauth2.initTokenClient({
-      client_id: clientId,
-      scope: "https://www.googleapis.com/auth/calendar",
-      callback: (resp)=>{
-        if(!resp || resp.error){ fail((resp && resp.error) || "Google sign-in failed or was cancelled."); return; }
-        succeed(resp);
-      },
-      error_callback: (err)=>{
-        fail((err && err.message) || "Google sign-in failed or was cancelled.");
-      },
-    });
-    if(silent){
-      // Silent refresh only needs a background/iframe grant when a session+consent already
-      // exist, so it's safe to fire automatically — no popup, nothing for a browser to block.
-      client.requestAccessToken({prompt:""});
-    }else{
-      // Interactive sign-in opens Google's own popup, and browsers only allow that as the direct
-      // result of a real click. Auto-triggering it here on page load — even though *this* page
-      // was itself opened by a click — is one step too far removed by the time Google's library
-      // has loaded over the network, so the browser blocks it as an unsolicited popup. Requiring
-      // an explicit click on this page keeps the user gesture intact.
-      const btn=document.getElementById("signinBtn");
-      document.getElementById("msg").textContent = "Click below to connect your Google Calendar.";
-      btn.style.display = "inline-block";
-      btn.onclick = ()=>{
-        btn.disabled = true;
-        document.getElementById("msg").textContent = "Waiting for Google…";
-        client.requestAccessToken({prompt:"consent"});
-      };
-    }
-  }catch(e){
-    fail("Error starting Google sign-in: " + e.message);
+  if(!clientId){
+    setMsg("Missing client_id.");
+  }else{
+    const authUrl = "https://accounts.google.com/o/oauth2/v2/auth?" + new URLSearchParams({
+      client_id: clientId, redirect_uri: REDIRECT_URI, response_type: "token",
+      scope: SCOPE, include_granted_scopes: "true", prompt: silent ? "none" : "consent",
+    }).toString();
+    location.replace(authUrl);
   }
 }
-// Called directly (not via the script tag's onload) — a plain, non-async/non-defer <script src>
-// blocks HTML parsing until it's fully loaded and executed, so by the time this second inline
-// script block runs, the gsi/client library above is already in place. Wiring this through the
-// script tag's onload attribute instead is a trap: that event fires before the browser has parsed
-// this later block, so the referenced function doesn't exist yet and the call just silently fails.
-init();
 </script>
 </body>
 </html>
