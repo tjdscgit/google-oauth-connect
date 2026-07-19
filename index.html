@@ -2,15 +2,21 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Connecting Google Calendar…</title>
+<title>Connect Google Calendar</title>
 <style>
   body{font:14px/1.4 -apple-system,Segoe UI,Arial,sans-serif;color:#222;background:#fff;
        display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}
-  .msg{max-width:320px;padding:1rem}
+  .wrap{max-width:320px;padding:1rem}
+  button.signin{margin-top:.9rem;padding:.6rem 1.2rem;font-size:14px;border-radius:6px;
+       border:1px solid #dadce0;background:#fff;cursor:pointer;display:none}
+  button.signin:hover{background:#f8f9fa}
 </style>
 </head>
 <body>
-<div class="msg" id="msg">Connecting to Google…</div>
+<div class="wrap">
+  <div id="msg">Connecting to Google…</div>
+  <button id="signinBtn" class="signin" type="button">Sign in with Google</button>
+</div>
 <script src="https://accounts.google.com/gsi/client"></script>
 <script>
 // Small https helper page for the Roseberry planner's Google Calendar export. The planner itself
@@ -24,7 +30,16 @@
 function qs(name){ return new URLSearchParams(location.search).get(name); }
 function fail(msg){
   document.getElementById("msg").textContent = msg;
+  document.getElementById("signinBtn").style.display = "none";
   if(window.opener) window.opener.postMessage({source:"gcal-oauth", error: msg}, "*");
+}
+function succeed(resp){
+  if(window.opener){
+    window.opener.postMessage({source:"gcal-oauth", token: resp.access_token, expiresIn: resp.expires_in}, "*");
+  }
+  document.getElementById("msg").textContent = "Connected — you can close this window.";
+  document.getElementById("signinBtn").style.display = "none";
+  setTimeout(()=>window.close(), 400);
 }
 function init(){
   const clientId = qs("client_id");
@@ -37,23 +52,33 @@ function init(){
     const client = google.accounts.oauth2.initTokenClient({
       client_id: clientId,
       scope: "https://www.googleapis.com/auth/calendar",
-      prompt: silent ? "" : "consent",
       callback: (resp)=>{
-        if(!resp || resp.error){
-          fail((resp && resp.error) || "Google sign-in failed or was cancelled.");
-          return;
-        }
-        if(window.opener){
-          window.opener.postMessage({source:"gcal-oauth", token: resp.access_token, expiresIn: resp.expires_in}, "*");
-        }
-        document.getElementById("msg").textContent = "Connected — you can close this window.";
-        setTimeout(()=>window.close(), 400);
+        if(!resp || resp.error){ fail((resp && resp.error) || "Google sign-in failed or was cancelled."); return; }
+        succeed(resp);
       },
       error_callback: (err)=>{
         fail((err && err.message) || "Google sign-in failed or was cancelled.");
       },
     });
-    client.requestAccessToken();
+    if(silent){
+      // Silent refresh only needs a background/iframe grant when a session+consent already
+      // exist, so it's safe to fire automatically — no popup, nothing for a browser to block.
+      client.requestAccessToken({prompt:""});
+    }else{
+      // Interactive sign-in opens Google's own popup, and browsers only allow that as the direct
+      // result of a real click. Auto-triggering it here on page load — even though *this* page
+      // was itself opened by a click — is one step too far removed by the time Google's library
+      // has loaded over the network, so the browser blocks it as an unsolicited popup. Requiring
+      // an explicit click on this page keeps the user gesture intact.
+      const btn=document.getElementById("signinBtn");
+      document.getElementById("msg").textContent = "Click below to connect your Google Calendar.";
+      btn.style.display = "inline-block";
+      btn.onclick = ()=>{
+        btn.disabled = true;
+        document.getElementById("msg").textContent = "Waiting for Google…";
+        client.requestAccessToken({prompt:"consent"});
+      };
+    }
   }catch(e){
     fail("Error starting Google sign-in: " + e.message);
   }
